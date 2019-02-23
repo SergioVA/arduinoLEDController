@@ -1,5 +1,6 @@
 #include <FastLED.h>
 #include <Arduino.h>
+#include <common.h>
 
 FASTLED_USING_NAMESPACE
 
@@ -16,83 +17,7 @@ FASTLED_USING_NAMESPACE
 #warning "Requires FastLED 3.1 or later; check github for latest code."
 #endif
 
-#define DATA_PIN    5
-//#define CLK_PIN   4
-#define LED_TYPE    WS2812B
-#define COLOR_ORDER GRB
-#define NUM_LEDS    240
-#define NUM_BUTTONS 9
-#define POWER_BUTTON_PIN A2
-#define POWER_LED_PIN 10
-#define SCENE_BUTTON_LED_PIN 9
-CRGB leds[NUM_LEDS];
-int frameNr;
 
-
-int buttonPins[NUM_BUTTONS] = {2, 3, 4, 6, 7, 8, 11, 12, 13};
-bool buttons[NUM_BUTTONS];
-
-#define STROBE_SPEED 4
-
-#define BRIGHTNESS          96
-#define FRAMES_PER_SECOND  120
-
-void setup() {
-  delay(3000); // 3 second delay for recovery
-  
-  // tell FastLED about the LED strip configuration
-  FastLED.addLeds<LED_TYPE,DATA_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
-  //FastLED.addLeds<LED_TYPE,DATA_PIN,CLK_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
-
-  // set master brightness control
-  FastLED.setBrightness(BRIGHTNESS);
-
-  //Configure scene button pins
-  pinMode(SCENE_BUTTON_LED_PIN, OUTPUT);
-  for(size_t i = 0; i < NUM_BUTTONS; i++)
-  {
-    pinMode(buttonPins[i], INPUT_PULLUP);
-  }
-
-  //Configure power button pins
-  pinMode(POWER_BUTTON_PIN, INPUT_PULLUP);
-  pinMode(POWER_LED_PIN, OUTPUT);
-
-  frameNr = 0;
-}
-
-
-// List of patterns to cycle through.  Each is defined as a separate function below.
-typedef void (*SimplePatternList[])();
-SimplePatternList gPatterns = { rainbow, rainbowWithGlitter, confetti, sinelon, juggle, white, magenta, blue, bpm };
-
-uint8_t gCurrentPatternNumber = 0; // Index number of which pattern is current
-uint8_t gHue = 0; // rotating "base color" used by many of the patterns
-  
-void loop()
-{
-  // Call the current pattern function once, updating the 'leds' array
-  gPatterns[gCurrentPatternNumber]();
-
-  // send the 'leds' array out to the actual LED strip
-  FastLED.show();  
-  // insert a delay to keep the framerate modest
-  FastLED.delay(1000/FRAMES_PER_SECOND); 
-
-  // do some periodic updates
-  EVERY_N_MILLISECONDS( 20 ) { gHue++; } // slowly cycle the "base color" through the rainbow
-  EVERY_N_SECONDS( 10 ) { nextPattern(); } // change patterns periodically
-
-  frameNr = (frameNr + 1) % FRAMES_PER_SECOND;
-}
-
-#define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
-
-void nextPattern()
-{
-  // add one to the current pattern number, and wrap around at the end
-  gCurrentPatternNumber = (gCurrentPatternNumber + 1) % ARRAY_SIZE( gPatterns);
-}
 
 void strobe()
 {
@@ -184,6 +109,65 @@ void juggle() {
   }
 }
 
+
+// List of patterns to cycle through.  Each is defined as a separate function below.
+typedef void (*SimplePatternList[])();
+SimplePatternList gPatterns = { rainbow, rainbowWithGlitter, confetti, sinelon, juggle, white, magenta, blue, bpm };
+
+bool powerButtonBlinkState;
+
+void setup() {
+  delay(3000); // 3 second delay for recovery
+  
+  // tell FastLED about the LED strip configuration
+  FastLED.addLeds<LED_TYPE,DATA_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+  //FastLED.addLeds<LED_TYPE,DATA_PIN,CLK_PIN,COLOR_ORDER>(leds, NUM_LEDS).setCorrection(TypicalLEDStrip);
+
+  // set master brightness control
+  FastLED.setBrightness(BRIGHTNESS);
+
+  //Configure scene button pins
+  pinMode(SCENE_BUTTON_LED_PIN, OUTPUT);
+  for(size_t i = 0; i < NUM_BUTTONS; i++)
+  {
+    pinMode(buttonPins[i], INPUT_PULLUP);
+  }
+
+  //Configure power button pins
+  pinMode(POWER_BUTTON_PIN, INPUT_PULLUP);
+  pinMode(POWER_LED_PIN, OUTPUT);
+
+  frameNr = 0;
+}
+  
+void loop()
+{
+  // Call the current pattern function once, updating the 'leds' array
+  gPatterns[gCurrentPatternNumber]();
+
+  // send the 'leds' array out to the actual LED strip
+  FastLED.show();  
+  // insert a delay to keep the framerate modest
+  FastLED.delay(1000/FRAMES_PER_SECOND); 
+
+  // do some periodic updates
+  EVERY_N_MILLISECONDS( 20 ) { gHue++; } // slowly cycle the "base color" through the rainbow
+  EVERY_N_SECONDS( 10 ) { nextPattern(); } // change patterns periodically
+
+  frameNr = (frameNr + 1) % FRAMES_PER_SECOND;
+
+  scanButtons();
+  EVERY_N_BSECONDS(1) { powerButton(); }
+}
+
+#define ARRAY_SIZE(A) (sizeof(A) / sizeof((A)[0]))
+
+void nextPattern()
+{
+  // add one to the current pattern number, and wrap around at the end
+  gCurrentPatternNumber = (gCurrentPatternNumber + 1) % ARRAY_SIZE( gPatterns);
+}
+
 bool isButtonPressed(int index) {
   return buttons[index];
 }
@@ -192,5 +176,26 @@ void scanButtons() {
   for(size_t i = 0; i < NUM_BUTTONS; i++) {
     //Inverted logic since we are using normally open contacts and pullup registers, buttons short to ground
     buttons[i] = (digitalRead(buttonPins[i]) == LOW);
+    Serial.print("Scan button ");
+    Serial.print(i);
+    Serial.print(": ");
+    Serial.println(buttons[i]);
   }
 }
+
+void powerButton() {
+  powerButtonBlinkState = !powerButtonBlinkState;
+  digitalWrite(POWER_LED_PIN, powerButtonBlinkState);
+  //digitalWrite(LED_BUILTIN, powerButtonBlinkState);
+
+  bool anyButtonPressed = false;
+  for(size_t i = 0; i < NUM_BUTTONS; i++)
+  {
+    if(buttons[i]) {
+      anyButtonPressed = true;
+      break;
+    }
+  }
+  digitalWrite(LED_BUILTIN, anyButtonPressed);
+}
+
